@@ -6,7 +6,7 @@ st.set_page_config(
     page_title="Controle Diário de Caixa",
     page_icon="💰",
     layout="wide",
-
+)
 st.title("💰 Controle Diário de Caixa")
 st.caption("Registre entradas e saídas e acompanhe o saldo a cada movimentação.")
 
