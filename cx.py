@@ -167,11 +167,10 @@ if st.session_state.movimentacoes:
             st.rerun()
 ##-----------------GERAR PDF----------------------------------------------------------
 def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo_final):
-    pdf = FPDF(orientation="L", unit="mm", format="A4") # Landscape cabe melhor a tabela
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
 
-    # Função auxiliar pra não quebrar com acento
     def safe(text):
         return str(text).encode("latin-1", "replace").decode("latin-1")
 
@@ -187,52 +186,45 @@ def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo
 
     # KPIs
     pdf.set_font("Arial", "B", 11)
-    pdf.cell(140, 8, safe(f"Saldo Anterior: {fmt(saldo_anterior)}"), border=0)
-    pdf.cell(140, 8, safe(f"Saldo Final: {fmt(saldo_final)}"), border=0, ln=True)
-    pdf.cell(140, 8, safe(f"Total Entradas: {fmt(total_ent)}"), border=0)
-    pdf.cell(140, 8, safe(f"Total Saídas: {fmt(total_sai)}"), border=0, ln=True)
+    pdf.cell(140, 8, safe(f"Saldo Anterior: {fmt(saldo_anterior)}"))
+    pdf.cell(140, 8, safe(f"Saldo Final: {fmt(saldo_final)}"), ln=True)
+    pdf.cell(140, 8, safe(f"Total Entradas: {fmt(total_ent)}"))
+    pdf.cell(140, 8, safe(f"Total Saídas: {fmt(total_sai)}"), ln=True)
     pdf.ln(5)
 
-    # Cabeçalho da tabela - Larguras para A4 Landscape = 277mm
-    col_widths = [80, 60, 35, 35, 35] # Soma = 245mm. Cabe tranquilo
+    # Tabela
+    col_widths = [80, 60, 35, 35, 35]
     headers = ["Descrição", "Categoria", "Entrada", "Saída", "Saldo"]
-
     pdf.set_font("Arial", "B", 10)
     for i, header in enumerate(headers):
         pdf.cell(col_widths[i], 8, safe(header), 1, align="C")
     pdf.ln()
 
-    # Linhas da tabela
     pdf.set_font("Arial", "", 9)
     saldo = saldo_anterior
-    if not movs_do_dia:
-        pdf.cell(sum(col_widths), 8, safe("Nenhuma movimentação nesta data."), 1, ln=True, align="C")
-    else:
-        for m in movs_do_dia:
-            saldo += m["valor"]
-            entrada = fmt(m["valor"]) if m["valor"] >= 0 else "---"
-            saida = fmt(-m["valor"]) if m["valor"] < 0 else "---"
+    for m in movs_do_dia:
+        saldo += m["valor"]
+        entrada = fmt(m["valor"]) if m["valor"] >= 0 else "---"
+        saida = fmt(-m["valor"]) if m["valor"] < 0 else "---"
+        pdf.cell(col_widths[0], 8, safe(m["descricao"][:35]), 1)
+        pdf.cell(col_widths[1], 8, safe(m["categoria"][:25]), 1)
+        pdf.cell(col_widths[2], 8, safe(entrada), 1, align="R")
+        pdf.cell(col_widths[3], 8, safe(saida), 1, align="R")
+        pdf.cell(col_widths[4], 8, safe(fmt(saldo)), 1, align="R", ln=True)
 
-            pdf.cell(col_widths[0], 8, safe(m["descricao"][:35]), 1)
-            pdf.cell(col_widths[1], 8, safe(m["categoria"][:25]), 1)
-            pdf.cell(col_widths[2], 8, safe(entrada), 1, align="R")
-            pdf.cell(col_widths[3], 8, safe(saida), 1, align="R")
-            pdf.cell(col_widths[4], 8, safe(fmt(saldo)), 1, align="R", ln=True)
-
-    # Linha de total
+    # Total
     pdf.set_font("Arial", "B", 10)
     pdf.cell(col_widths[0] + col_widths[1], 8, safe("TOTAL"), 1)
     pdf.cell(col_widths[2], 8, safe(fmt(total_ent)), 1, align="R")
     pdf.cell(col_widths[3], 8, safe(fmt(total_sai)), 1, align="R")
     pdf.cell(col_widths[4], 8, safe(fmt(saldo_final)), 1, align="R", ln=True)
 
-    # Rodapé
     pdf.ln(10)
     pdf.set_font("Arial", "I", 8)
     pdf.cell(0, 5, safe(f"Relatório gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"), align="C")
 
-    return pdf.output(dest="S") # Já retorna em bytes no formato certo pro fpdf2
-
+    # LINHA PRINCIPAL: Converter pra bytes
+    return bytes(pdf.output()) # <- Essa é a correção
 # ── Botão de Download do PDF ───────────────────────────────────────────────────
 st.divider()
 col1, col2 = st.columns([3,1])
@@ -242,13 +234,13 @@ with col2:
             st.warning("Não há movimentações nesta data para gerar PDF.")
         else:
             pdf_bytes = gerar_pdf(movs_do_dia, data_filtro_str, saldo_anterior, total_ent, total_sai, saldo_final)
+            buffer = io.BytesIO(pdf_bytes) # <- Envolve em BytesIO
             nome_arquivo = f"caixa_{data_filtro_str}.pdf"
 
             st.download_button(
                 label="⬇️ Baixar PDF",
-                data=pdf_bytes,
+                data=buffer, # <- passa o buffer
                 file_name=nome_arquivo,
                 mime="application/pdf",
                 use_container_width=True
             )
-
