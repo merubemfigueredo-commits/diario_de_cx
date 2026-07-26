@@ -5,287 +5,250 @@ import io
 from datetime import date, datetime
 
 st.set_page_config(
-    page_title="Fluxo de Caixa",
+    page_title="Controle Diário de Caixa",
     page_icon="💰",
-    layout="wide"
+    layout="wide",
 )
+st.title("💰 Controle Diário de Caixa")
+st.caption("Registre entradas e saídas e acompanhe o saldo a cada movimentação.")
 
-st.title("Demonstração do Fluxo de Caixa")
-st.caption("Análise comparativa pelos métodos Direto e Indireto")
+# ── Estado da sessão ──────────────────────────────────────────────────────────
+if "movimentacoes" not in st.session_state:
+    st.session_state.movimentacoes = []
 
-def fmt(v):
+CATEGORIAS_ENTRADA = [
+    "Venda de Produtos", "Prestação de Serviços", "Recebimento de Clientes",
+    "Rendimentos Financeiros", "Outras Entradas",
+]
+CATEGORIAS_SAIDA = [
+    "Compras / Fornecedores", "Salários e Encargos", "Impostos e Taxas",
+    "Aluguel / Utilidades", "Marketing e Publicidade", "Equipamentos", "Outras Saídas",
+]
+
+def fmt(v: float) -> str:
     return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def safe(text): # pra tratar acentos no fpdf
-    return str(text).encode("latin-1", "replace").decode("latin-1")
+# ── Layout: formulário | extrato ───────────────────────────────────────────────
+col_form, col_extrato = st.columns([1, 2])
 
-def gerar_pdf_fluxo(tipo, dados):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
+# ── Formulário de nova movimentação ───────────────────────────────────────────
+with col_form:
+    st.subheader("Nova Movimentação")
+    with st.form("form_mov", clear_on_submit=True):
+        data_mov  = st.date_input("Data", value=date.today())
+        tipo      = st.radio("Tipo", ["Entrada", "Saída"], horizontal=True)
+        cats      = CATEGORIAS_ENTRADA if tipo == "Entrada" else CATEGORIAS_SAIDA
+        categoria = st.selectbox("Categoria", cats)
+        descricao = st.text_input("Descrição", placeholder="Ex: Venda balcão #142")
+        valor     = st.number_input("Valor (R$)", min_value=0.01, step=0.01, format="%.2f")
+        submit    = st.form_submit_button("✅ Adicionar", use_container_width=True)
+
+    if submit:
+        if not descricao.strip():
+            st.error("Informe uma descrição.")
+        else:
+            st.session_state.movimentacoes.append({
+                "data":      data_mov.isoformat(),
+                "descricao": descricao.strip(),
+                "categoria": categoria,
+                "tipo":      tipo,
+                "valor":     valor if tipo == "Entrada" else -valor,
+            })
+            st.success(f"{tipo} de {fmt(valor)} registrada!")
+            st.rerun()
+
+# ── Extrato do dia selecionado ─────────────────────────────────────────────────
+with col_extrato:
+    st.subheader("Extrato do Dia")
+
+    datas_com_movs = sorted(
+        {m["data"] for m in st.session_state.movimentacoes}, reverse=True
+    )
+    data_filtro_str = st.date_input(
+        "Selecionar data",
+        value=date.today(),
+        key="filtro_data",
+        label_visibility="collapsed",
+    ).isoformat()
+
+    movs = st.session_state.movimentacoes
+    movs_ate_ontem = [m for m in movs if m["data"] < data_filtro_str]
+    movs_do_dia    = [m for m in movs if m["data"] == data_filtro_str]
+
+    saldo_anterior = sum(m["valor"] for m in movs_ate_ontem)
+
+    # Monta tabela com saldo corrente
+    saldo = saldo_anterior
+    linhas = []
+    for m in movs_do_dia:
+        saldo += m["valor"]
+        linhas.append({
+            "Descrição":  m["descricao"],
+            "Categoria":  m["categoria"],
+            "Entradas":   fmt(m["valor"])  if m["valor"] >= 0 else "—",
+            "Saídas":     fmt(-m["valor"]) if m["valor"] < 0  else "—",
+            "Saldo":      fmt(saldo),
+            "_tipo":      m["tipo"],
+            "_saldo_num": saldo,
+        })
+
+    total_ent = sum(m["valor"] for m in movs_do_dia if m["valor"] >= 0)
+    total_sai = sum(-m["valor"] for m in movs_do_dia if m["valor"] < 0)
+    resultado = total_ent - total_sai
+    saldo_final = saldo
+
+    # KPIs do dia
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Saldo Anterior", fmt(saldo_anterior))
+    k2.metric("Entradas", fmt(total_ent), delta=fmt(total_ent) if total_ent else None, delta_color="normal")
+    k3.metric("Saídas", fmt(total_sai), delta=f"-{fmt(total_sai)}" if total_sai else None, delta_color="inverse")
+    k4.metric("Saldo Final", fmt(saldo_final), delta=fmt(resultado) if resultado != 0 else None,
+              delta_color="normal" if resultado >= 0 else "inverse")
+
+    st.divider()
+
+    if not linhas:
+        st.info("Nenhuma movimentação nesta data. Use o formulário ao lado para adicionar.")
+    else:
+        df = pd.DataFrame(linhas)
+
+        # Destaca entradas e saídas
+        def colorir(row):
+            if row["_tipo"] == "Entrada":
+                return ["background-color: #f0fdf4"] * len(row)
+            else:
+                return ["background-color: #fff1f2"] * len(row)
+
+        df_display = df[["Descrição", "Categoria", "Entradas", "Saídas", "Saldo"]]
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Entradas": st.column_config.TextColumn(width="small"),
+                "Saídas":   st.column_config.TextColumn(width="small"),
+                "Saldo":    st.column_config.TextColumn(width="medium"),
+            },
+        )
+
+        # Linha de totais
+        st.markdown(
+            f"""
+            | | | **Entradas** | **Saídas** | **Saldo Final** |
+            |---|---|---|---|---|
+            | **Total** | | **{fmt(total_ent)}** | **{fmt(total_sai)}** | **{fmt(saldo_final)}** |
+            """,
+            unsafe_allow_html=False,
+        )
+
+# ── Excluir movimentações ──────────────────────────────────────────────────────
+if st.session_state.movimentacoes:
+    with st.expander("⚠️ Gerenciar / Excluir movimentações"):
+        df_all = pd.DataFrame(st.session_state.movimentacoes)
+        df_all["valor_fmt"] = df_all["valor"].apply(fmt)
+        df_all_display = df_all[["data", "tipo", "descricao", "categoria", "valor_fmt"]].rename(columns={
+            "data": "Data", "tipo": "Tipo", "descricao": "Descrição",
+            "categoria": "Categoria", "valor_fmt": "Valor",
+        })
+
+        st.dataframe(df_all_display, use_container_width=True, hide_index=False)
+
+        idx_excluir = st.number_input(
+            "Índice da linha a excluir (ver tabela acima)", min_value=0,
+            max_value=max(0, len(st.session_state.movimentacoes) - 1), step=1,
+        )
+        if st.button("🗑️ Excluir linha selecionada"):
+            st.session_state.movimentacoes.pop(idx_excluir)
+            st.success("Movimentação excluída.")
+            st.rerun()
+
+        if st.button("🗑️ Limpar TUDO", type="secondary"):
+            st.session_state.movimentacoes = []
+            st.rerun()
+##-----------------GERAR PDF------------------------------------------------------------------------------------------------
+def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo_final):
+    pdf = FPDF(orientation="L", unit="mm", format="A4") # Landscape cabe melhor a tabela
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
 
+    # Função auxiliar pra não quebrar com acento
+    def safe(text):
+        return str(text).encode("latin-1", "replace").decode("latin-1")
+
     # Título
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, safe(f"Demonstração do Fluxo de Caixa - Método {tipo}"), ln=True, align="C")
-    pdf.set_font("Arial", "", 10)
-    pdf.cell(0, 6, safe(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}"), ln=True, align="C")
+    pdf.cell(0, 10, safe("Controle Diário de Caixa"), ln=True, align="C")
+
+    # Data
+    data_fmt = datetime.fromisoformat(data_str).strftime("%d/%m/%Y")
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 8, safe(f"Data: {data_fmt}"), ln=True, align="C")
     pdf.ln(5)
 
-    def secao(titulo):
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, safe(titulo), ln=True)
-        pdf.set_font("Arial", "", 10)
+    # KPIs
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(140, 8, safe(f"Saldo Anterior: {fmt(saldo_anterior)}"), border=0)
+    pdf.cell(140, 8, safe(f"Saldo Final: {fmt(saldo_final)}"), border=0, ln=True)
+    pdf.cell(140, 8, safe(f"Total Entradas: {fmt(total_ent)}"), border=0)
+    pdf.cell(140, 8, safe(f"Total Saídas: {fmt(total_sai)}"), border=0, ln=True)
+    pdf.ln(5)
 
-    def linha(desc, valor, bold=False):
-        font = "B" if bold else ""
-        pdf.set_font("Arial", font, 10)
-        pdf.cell(140, 6, safe(desc))
-        pdf.cell(0, 6, safe(fmt(valor)), ln=True, align="R")
+    # Cabeçalho da tabela - Larguras para A4 Landscape = 277mm
+    col_widths = [80, 60, 35, 35, 35] # Soma = 245mm. Cabe tranquilo
+    headers = ["Descrição", "Categoria", "Entrada", "Saída", "Saldo"]
 
-    if tipo == "Direto":
-        secao("ATIVIDADES OPERACIONAIS")
-        linha("Recebimentos de Clientes", dados["rec_clientes"])
-        linha("Recebimento de Juros/Dividendos", dados["rec_juros"])
-        linha("Outros Recebimentos", dados["outros_rec"])
-        linha("Pagamentos a Fornecedores", dados["pag_forn"])
-        linha("Pagamentos de Salários", dados["pag_sal"])
-        linha("Pagamentos de Impostos", dados["pag_imp"])
-        linha("Pagamentos de Aluguéis", dados["pag_alug"])
-        linha("Pagamentos de Serviços", dados["pag_serv"])
-        linha("Outros Pagamentos", dados["outros_pag"])
-        pdf.ln(1)
-        linha("Caixa Líquido das Ativ. Operacionais", dados["cx_op"], bold=True)
-        pdf.ln(4)
+    pdf.set_font("Arial", "B", 10)
+    for i, header in enumerate(headers):
+        pdf.cell(col_widths[i], 8, safe(header), 1, align="C")
+    pdf.ln()
 
-        secao("ATIVIDADES DE INVESTIMENTO")
-        linha("Aquisição de Ativos Imobilizados", dados["compra_ativ"])
-        linha("Venda de Ativos Imobilizados", dados["venda_ativ"])
-        linha("Aplicações Financeiras", dados["aplic_fin"])
-        linha("Resgates de Aplicações", dados["resg_fin"])
-        pdf.ln(1)
-        linha("Caixa Líquido das Ativ. de Investimento", dados["cx_inv"], bold=True)
-        pdf.ln(4)
+    # Linhas da tabela
+    pdf.set_font("Arial", "", 9)
+    saldo = saldo_anterior
+    if not movs_do_dia:
+        pdf.cell(sum(col_widths), 8, safe("Nenhuma movimentação nesta data."), 1, ln=True, align="C")
+    else:
+        for m in movs_do_dia:
+            saldo += m["valor"]
+            entrada = fmt(m["valor"]) if m["valor"] >= 0 else "---"
+            saida = fmt(-m["valor"]) if m["valor"] < 0 else "---"
 
-        secao("ATIVIDADES DE FINANCIAMENTO")
-        linha("Empréstimos Obtidos", dados["emp_obtidos"])
-        linha("Amortização de Empréstimos", dados["amort_emp"])
-        linha("Pagamento de Dividendos", dados["pag_div"])
-        pdf.ln(1)
-        linha("Caixa Líquido das Ativ. de Financiamento", dados["cx_fin"], bold=True)
-        pdf.ln(4)
+            pdf.cell(col_widths[0], 8, safe(m["descricao"][:35]), 1)
+            pdf.cell(col_widths[1], 8, safe(m["categoria"][:25]), 1)
+            pdf.cell(col_widths[2], 8, safe(entrada), 1, align="R")
+            pdf.cell(col_widths[3], 8, safe(saida), 1, align="R")
+            pdf.cell(col_widths[4], 8, safe(fmt(saldo)), 1, align="R", ln=True)
 
-    else: # Indireto
-        secao("ATIVIDADES OPERACIONAIS")
-        linha("Lucro Líquido do Exercício", dados["lucro"])
-        pdf.set_font("Arial", "I", 9)
-        pdf.cell(0, 6, safe("Ajustes por itens sem efeito caixa:"), ln=True)
-        pdf.set_font("Arial", "", 10)
-        linha("  Depreciação e Amortização", dados["deprec"])
-        linha("  Amortização de Intangíveis", dados["amort_int"])
-        linha("  Perda na Venda de Ativos", dados["perda_at"])
-        linha("  Ganho na Venda de Ativos", dados["ganho_at"])
-        pdf.set_font("Arial", "I", 9)
-        pdf.cell(0, 6, safe("Variações no capital de giro:"), ln=True)
-        pdf.set_font("Arial", "", 10)
-        linha("  Contas a Receber", dados["var_cr"])
-        linha("  Estoques", dados["var_est"])
-        linha("  Outros Ativos Circulantes", dados["var_oac"])
-        linha("  Fornecedores", dados["var_forn"])
-        linha("  Salários a Pagar", dados["var_sal"])
-        linha("  Impostos a Pagar", dados["var_imp"])
-        linha("  Outros Passivos Circulantes", dados["var_opc"])
-        pdf.ln(1)
-        linha("Caixa Líquido das Ativ. Operacionais", dados["cx_op2"], bold=True)
-        pdf.ln(4)
+    # Linha de total
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(col_widths[0] + col_widths[1], 8, safe("TOTAL"), 1)
+    pdf.cell(col_widths[2], 8, safe(fmt(total_ent)), 1, align="R")
+    pdf.cell(col_widths[3], 8, safe(fmt(total_sai)), 1, align="R")
+    pdf.cell(col_widths[4], 8, safe(fmt(saldo_final)), 1, align="R", ln=True)
 
-        secao("ATIVIDADES DE INVESTIMENTO")
-        linha("Aquisição de Ativos Imobilizados", dados["compra2"])
-        linha("Venda de Ativos Imobilizados", dados["venda2"])
-        linha("Aplicações Financeiras", dados["aplic2"])
-        linha("Resgates de Aplicações", dados["resg2"])
-        pdf.ln(1)
-        linha("Caixa Líquido das Ativ. de Investimento", dados["cx_inv2"], bold=True)
-        pdf.ln(4)
+    # Rodapé
+    pdf.ln(10)
+    pdf.set_font("Arial", "I", 8)
+    pdf.cell(0, 5, safe(f"Relatório gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"), align="C")
 
-        secao("ATIVIDADES DE FINANCIAMENTO")
-        linha("Empréstimos Obtidos", dados["emp2"])
-        linha("Amortização de Empréstimos", dados["amort2"])
-        linha("Pagamento de Dividendos", dados["div2"])
-        pdf.ln(1)
-        linha("Caixa Líquido das Ativ. de Financiamento", dados["cx_fin2"], bold=True)
-        pdf.ln(4)
-    
-    pdf.set_draw_color(0,0,0)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(2)
-    pdf.set_font("Arial", "B", 12)
-    linha(f"Variação Líquida de Caixa - Método {tipo}", dados["variacao"], bold=True)
+    return pdf.output(dest="S") # Já retorna em bytes no formato certo pro fpdf2
 
-    return bytes(pdf.output())
+# ── Botão de Download do PDF ───────────────────────────────────────────────────
+st.divider()
+col1, col2 = st.columns([3,1])
+with col2:
+    if st.button("📄 Gerar PDF do Dia", use_container_width=True):
+        if not movs_do_dia:
+            st.warning("Não há movimentações nesta data para gerar PDF.")
+        else:
+            pdf_bytes = gerar_pdf(movs_do_dia, data_filtro_str, saldo_anterior, total_ent, total_sai, saldo_final)
+            nome_arquivo = f"caixa_{data_filtro_str}.pdf"
 
-aba_direto, aba_indireto = st.tabs(["Método Direto", "Método Indireto"])
-
-# ──────────────────────────────────────────────────────────────────────────────
-# MÉTODO DIRETO
-# ──────────────────────────────────────────────────────────────────────────────
-with aba_direto:
-    col_inputs, col_demo = st.columns([1, 1])
-
-    with col_inputs:
-        st.subheader("🔵 Atividades Operacionais — Entradas")
-        rec_clientes   = st.number_input("Recebimentos de Clientes",        value=850_000.0, step=1000.0, key="d_rec_cli")
-        rec_juros      = st.number_input("Recebimento de Juros/Dividendos", value=12_000.0,  step=1000.0, key="d_rec_jur")
-        outros_rec     = st.number_input("Outros Recebimentos",             value=8_000.0,   step=1000.0, key="d_outros_rec")
-
-        st.subheader("🔴 Atividades Operacionais — Saídas")
-        pag_forn   = st.number_input("Pagamentos a Fornecedores", value=-420_000.0, step=1000.0, key="d_forn")
-        pag_sal    = st.number_input("Pagamentos de Salários",    value=-180_000.0, step=1000.0, key="d_sal")
-        pag_imp    = st.number_input("Pagamentos de Impostos",    value=-65_000.0,  step=1000.0, key="d_imp")
-        pag_alug   = st.number_input("Pagamentos de Aluguéis",    value=-36_000.0,  step=1000.0, key="d_alug")
-        pag_serv   = st.number_input("Pagamentos de Serviços",    value=-24_000.0,  step=1000.0, key="d_serv")
-        outros_pag = st.number_input("Outros Pagamentos",         value=-15_000.0,  step=1000.0, key="d_outros_pag")
-
-        st.subheader("🟣 Atividades de Investimento")
-        compra_ativ  = st.number_input("Aquisição de Ativos Imobilizados", value=-120_000.0, step=1000.0, key="d_compra")
-        venda_ativ   = st.number_input("Venda de Ativos Imobilizados",     value=45_000.0,   step=1000.0, key="d_venda")
-        aplic_fin    = st.number_input("Aplicações Financeiras",           value=-80_000.0,  step=1000.0, key="d_aplic")
-        resg_fin     = st.number_input("Resgates de Aplicações",           value=60_000.0,   step=1000.0, key="d_resg")
-
-        st.subheader("🟠 Atividades de Financiamento")
-        emp_obtidos  = st.number_input("Empréstimos Obtidos",         value=200_000.0,  step=1000.0, key="d_emp")
-        amort_emp    = st.number_input("Amortização de Empréstimos",  value=-150_000.0, step=1000.0, key="d_amort")
-        pag_div      = st.number_input("Pagamento de Dividendos",     value=-50_000.0,  step=1000.0, key="d_div")
-
-    # Cálculos
-    cx_op  = rec_clientes + rec_juros + outros_rec + pag_forn + pag_sal + pag_imp + pag_alug + pag_serv + outros_pag
-    cx_inv = compra_ativ + venda_ativ + aplic_fin + resg_fin
-    cx_fin = emp_obtidos + amort_emp + pag_div
-    variacao = cx_op + cx_inv + cx_fin
-
-    with col_demo:
-        st.subheader("📄 Demonstrativo — Método Direto")
-        st.divider()
-        # ... aqui continua igual o seu código de exibir ...
-        st.markdown("**ATIVIDADES OPERACIONAIS**")
-        st.write(f"Recebimentos de Clientes: **{fmt(rec_clientes)}**")
-        st.write(f"Recebimento de Juros/Dividendos: **{fmt(rec_juros)}**")
-        st.write(f"Outros Recebimentos: **{fmt(outros_rec)}**")
-        st.write(f"Pagamentos a Fornecedores: **{fmt(pag_forn)}**")
-        st.write(f"Pagamentos de Salários: **{fmt(pag_sal)}**")
-        st.write(f"Pagamentos de Impostos: **{fmt(pag_imp)}**")
-        st.write(f"Pagamentos de Aluguéis: **{fmt(pag_alug)}**")
-        st.write(f"Pagamentos de Serviços: **{fmt(pag_serv)}**")
-        st.write(f"Outros Pagamentos: **{fmt(outros_pag)}**")
-        cor_op = "green" if cx_op >= 0 else "red"
-        st.markdown(f"**Caixa Líquido das Ativ. Operacionais: :{cor_op}[{fmt(cx_op)}]**")
-        st.divider()
-        st.markdown("**ATIVIDADES DE INVESTIMENTO**")
-        st.write(f"Aquisição de Ativos Imobilizados: **{fmt(compra_ativ)}**")
-        st.write(f"Venda de Ativos Imobilizados: **{fmt(venda_ativ)}**")
-        st.write(f"Aplicações Financeiras: **{fmt(aplic_fin)}**")
-        st.write(f"Resgates de Aplicações: **{fmt(resg_fin)}**")
-        cor_inv = "green" if cx_inv >= 0 else "red"
-        st.markdown(f"**Caixa Líquido das Ativ. de Investimento: :{cor_inv}[{fmt(cx_inv)}]**")
-        st.divider()
-        st.markdown("**ATIVIDADES DE FINANCIAMENTO**")
-        st.write(f"Empréstimos Obtidos: **{fmt(emp_obtidos)}**")
-        st.write(f"Amortização de Empréstimos: **{fmt(amort_emp)}**")
-        st.write(f"Pagamento de Dividendos: **{fmt(pag_div)}**")
-        cor_fin = "green" if cx_fin >= 0 else "red"
-        st.markdown(f"**Caixa Líquido das Ativ. de Financiamento: :{cor_fin}[{fmt(cx_fin)}]**")
-        st.divider()
-        cor_var = "green" if variacao >= 0 else "red"
-        st.markdown(f"## Variação Líquida de Caixa: :{cor_var}[{fmt(variacao)}]")
-
-        # BOTÃO PDF DIRETO
-        dados_direto = locals()
-        pdf_bytes = gerar_pdf_fluxo("Direto", dados_direto)
-        buffer = io.BytesIO(pdf_bytes)
-        st.download_button("⬇️ Baixar PDF - Método Direto", data=buffer, file_name="fluxo_caixa_direto.pdf", mime="application/pdf", use_container_width=True)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# MÉTODO INDIRETO
-# ──────────────────────────────────────────────
-with aba_indireto:
-    col_inputs, col_demo = st.columns([1, 1])
-
-    with col_inputs:
-        st.subheader("🔵 Lucro Líquido do Exercício")
-        lucro = st.number_input("Lucro Líquido", value=180_000.0, step=1000.0, key="i_lucro")
-        # ... resto dos inputs igual ...
-        st.subheader("🔵 Ajustes — Itens sem Efeito Caixa")
-        deprec    = st.number_input("Depreciação e Amortização",      value=45_000.0, step=1000.0, key="i_dep")
-        amort_int = st.number_input("Amortização de Intangíveis",     value=12_000.0, step=1000.0, key="i_amort_int")
-        perda_at  = st.number_input("Perda na Venda de Ativos",       value=-8_000.0, step=1000.0, key="i_perda")
-        ganho_at  = st.number_input("Ganho na Venda de Ativos",       value=15_000.0, step=1000.0, key="i_ganho")
-        st.subheader("🔵 Variações no Capital de Giro")
-        var_cr    = st.number_input("Variação em Contas a Receber",          value=-32_000.0, step=1000.0, key="i_cr")
-        var_est   = st.number_input("Variação em Estoques",                  value=18_000.0,  step=1000.0, key="i_est")
-        var_oac   = st.number_input("Variação em Outros Ativos Circulantes", value=-5_000.0,  step=1000.0, key="i_oac")
-        var_forn  = st.number_input("Variação em Fornecedores",              value=24_000.0,  step=1000.0, key="i_forn")
-        var_sal   = st.number_input("Variação em Salários a Pagar",          value=-10_000.0, step=1000.0, key="i_sal")
-        var_imp   = st.number_input("Variação em Impostos a Pagar",          value=8_000.0,   step=1000.0, key="i_imp")
-        var_opc   = st.number_input("Variação em Outros Passivos Circulantes", value=12_000.0, step=1000.0, key="i_opc")
-        st.subheader("🟣 Atividades de Investimento")
-        compra2   = st.number_input("Aquisição de Ativos Imobilizados", value=-120_000.0, step=1000.0, key="i_compra")
-        venda2    = st.number_input("Venda de Ativos Imobilizados",     value=45_000.0,   step=1000.0, key="i_venda")
-        aplic2    = st.number_input("Aplicações Financeiras",           value=-80_000.0,  step=1000.0, key="i_aplic")
-        resg2     = st.number_input("Resgates de Aplicações",           value=60_000.0,   step=1000.0, key="i_resg")
-        st.subheader("🟠 Atividades de Financiamento")
-        emp2      = st.number_input("Empréstimos Obtidos",        value=200_000.0,  step=1000.0, key="i_emp")
-        amort2    = st.number_input("Amortização de Empréstimos", value=-150_000.0, step=1000.0, key="i_amort")
-        div2      = st.number_input("Pagamento de Dividendos",    value=-50_000.0,  step=1000.0, key="i_div")
-
-    # Cálculos
-    ajustes_nc  = deprec + amort_int + perda_at + ganho_at
-    var_capgiro = var_cr + var_est + var_oac + var_forn + var_sal + var_imp + var_opc
-    cx_op2      = lucro + ajustes_nc + var_capgiro
-    cx_inv2     = compra2 + venda2 + aplic2 + resg2
-    cx_fin2     = emp2 + amort2 + div2
-    variacao2   = cx_op2 + cx_inv2 + cx_fin2
-
-    with col_demo:
-        st.subheader("📄 Demonstrativo — Método Indireto")
-        st.divider()
-        # ... aqui continua igual o seu código de exibir ...
-        st.markdown("**ATIVIDADES OPERACIONAIS**")
-        st.write(f"Lucro Líquido do Exercício: **{fmt(lucro)}**")
-        st.markdown("*Ajustes por itens sem efeito caixa:*")
-        st.write(f"  Depreciação e Amortização: **{fmt(deprec)}**")
-        st.write(f"  Amortização de Intangíveis: **{fmt(amort_int)}**")
-        st.write(f"  Perda na Venda de Ativos: **{fmt(perda_at)}**")
-        st.write(f"  Ganho na Venda de Ativos: **{fmt(ganho_at)}**")
-        st.markdown("*Variações no capital de giro:*")
-        st.write(f"  Contas a Receber: **{fmt(var_cr)}**")
-        st.write(f"  Estoques: **{fmt(var_est)}**")
-        st.write(f"  Outros Ativos Circulantes: **{fmt(var_oac)}**")
-        st.write(f"  Fornecedores: **{fmt(var_forn)}**")
-        st.write(f"  Salários a Pagar: **{fmt(var_sal)}**")
-        st.write(f"  Impostos a Pagar: **{fmt(var_imp)}**")
-        st.write(f"  Outros Passivos Circulantes: **{fmt(var_opc)}**")
-        cor_op2 = "green" if cx_op2 >= 0 else "red"
-        st.markdown(f"**Caixa Líquido das Ativ. Operacionais: :{cor_op2}[{fmt(cx_op2)}]**")
-        st.divider()
-        st.markdown("**ATIVIDADES DE INVESTIMENTO**")
-        st.write(f"Aquisição de Ativos Imobilizados: **{fmt(compra2)}**")
-        st.write(f"Venda de Ativos Imobilizados: **{fmt(venda2)}**")
-        st.write(f"Aplicações Financeiras: **{fmt(aplic2)}**")
-        st.write(f"Resgates de Aplicações: **{fmt(resg2)}**")
-        cor_inv2 = "green" if cx_inv2 >= 0 else "red"
-        st.markdown(f"**Caixa Líquido das Ativ. de Investimento: :{cor_inv2}[{fmt(cx_inv2)}]**")
-        st.divider()
-        st.markdown("**ATIVIDADES DE FINANCIAMENTO**")
-        st.write(f"Empréstimos Obtidos: **{fmt(emp2)}**")
-        st.write(f"Amortização de Empréstimos: **{fmt(amort2)}**")
-        st.write(f"Pagamento de Dividendos: **{fmt(div2)}**")
-        cor_fin2 = "green" if cx_fin2 >= 0 else "red"
-        st.markdown(f"**Caixa Líquido das Ativ. de Financiamento: :{cor_fin2}[{fmt(cx_fin2)}]**")
-        st.divider()
-        cor_var2 = "green" if variacao2 >= 0 else "red"
-        st.markdown(f"## Variação Líquida de Caixa: :{cor_var2}[{fmt(variacao2)}]")
-
-        # BOTÃO PDF INDIRETO
-        dados_indireto = locals()
-        pdf_bytes = gerar_pdf_fluxo("Indireto", dados_indireto)
-        buffer = io.BytesIO(pdf_bytes)
-        st.download_button("⬇️ Baixar PDF - Método Indireto", data=buffer, file_name="fluxo_caixa_indireto.pdf", mime="application/pdf", use_container_width=True)
+            st.download_button(
+                label="⬇️ Baixar PDF",
+                data=pdf_bytes,
+                file_name=nome_arquivo,
+                mime="application/pdf",
+                use_container_width=True
+            )
+## THE END
