@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
+from fpdf import FPDF
+from io import BytesIO
 
 st.set_page_config(
     page_title="Controle Diário de Caixa",
