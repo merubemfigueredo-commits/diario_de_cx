@@ -233,6 +233,77 @@ def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo
     return pdf.output(dest="S").decode("latin-1").encode("utf-8")
 
 # ── Botão de Download do PDF ───────────────────────────────────────────────────
+from fpdf import FPDF
+import io
+
+def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo_final):
+    pdf = FPDF(orientation="L", unit="mm", format="A4") # Landscape cabe melhor a tabela
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    # Função auxiliar pra não quebrar com acento
+    def safe(text):
+        return str(text).encode("latin-1", "replace").decode("latin-1")
+
+    # Título
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, safe("Controle Diário de Caixa"), ln=True, align="C")
+
+    # Data
+    data_fmt = datetime.fromisoformat(data_str).strftime("%d/%m/%Y")
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 8, safe(f"Data: {data_fmt}"), ln=True, align="C")
+    pdf.ln(5)
+
+    # KPIs
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(140, 8, safe(f"Saldo Anterior: {fmt(saldo_anterior)}"), border=0)
+    pdf.cell(140, 8, safe(f"Saldo Final: {fmt(saldo_final)}"), border=0, ln=True)
+    pdf.cell(140, 8, safe(f"Total Entradas: {fmt(total_ent)}"), border=0)
+    pdf.cell(140, 8, safe(f"Total Saídas: {fmt(total_sai)}"), border=0, ln=True)
+    pdf.ln(5)
+
+    # Cabeçalho da tabela - Larguras para A4 Landscape = 277mm
+    col_widths = [80, 60, 35, 35, 35] # Soma = 245mm. Cabe tranquilo
+    headers = ["Descrição", "Categoria", "Entrada", "Saída", "Saldo"]
+
+    pdf.set_font("Arial", "B", 10)
+    for i, header in enumerate(headers):
+        pdf.cell(col_widths[i], 8, safe(header), 1, align="C")
+    pdf.ln()
+
+    # Linhas da tabela
+    pdf.set_font("Arial", "", 9)
+    saldo = saldo_anterior
+    if not movs_do_dia:
+        pdf.cell(sum(col_widths), 8, safe("Nenhuma movimentação nesta data."), 1, ln=True, align="C")
+    else:
+        for m in movs_do_dia:
+            saldo += m["valor"]
+            entrada = fmt(m["valor"]) if m["valor"] >= 0 else "---"
+            saida = fmt(-m["valor"]) if m["valor"] < 0 else "---"
+
+            pdf.cell(col_widths[0], 8, safe(m["descricao"][:35]), 1)
+            pdf.cell(col_widths[1], 8, safe(m["categoria"][:25]), 1)
+            pdf.cell(col_widths[2], 8, safe(entrada), 1, align="R")
+            pdf.cell(col_widths[3], 8, safe(saida), 1, align="R")
+            pdf.cell(col_widths[4], 8, safe(fmt(saldo)), 1, align="R", ln=True)
+
+    # Linha de total
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(col_widths[0] + col_widths[1], 8, safe("TOTAL"), 1)
+    pdf.cell(col_widths[2], 8, safe(fmt(total_ent)), 1, align="R")
+    pdf.cell(col_widths[3], 8, safe(fmt(total_sai)), 1, align="R")
+    pdf.cell(col_widths[4], 8, safe(fmt(saldo_final)), 1, align="R", ln=True)
+
+    # Rodapé
+    pdf.ln(10)
+    pdf.set_font("Arial", "I", 8)
+    pdf.cell(0, 5, safe(f"Relatório gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"), align="C")
+
+    return pdf.output(dest="S") # Já retorna em bytes no formato certo pro fpdf2
+
+# ── Botão de Download do PDF ───────────────────────────────────────────────────
 st.divider()
 col1, col2 = st.columns([3,1])
 with col2:
@@ -242,7 +313,7 @@ with col2:
         else:
             pdf_bytes = gerar_pdf(movs_do_dia, data_filtro_str, saldo_anterior, total_ent, total_sai, saldo_final)
             nome_arquivo = f"caixa_{data_filtro_str}.pdf"
-            
+
             st.download_button(
                 label="⬇️ Baixar PDF",
                 data=pdf_bytes,
@@ -250,4 +321,3 @@ with col2:
                 mime="application/pdf",
                 use_container_width=True
             )
-
