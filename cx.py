@@ -230,7 +230,7 @@ def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo
     pdf.set_font("Arial", "I", 8)
     pdf.cell(0, 5, f"Relatorio gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}", align="C")
     
-    return pdf.output(dest="S").encode("utf-8")
+    return pdf.output(dest="S").encode("latin-1")
 
 # ── Botão de Download do PDF ───────────────────────────────────────────────────
 st.divider()
