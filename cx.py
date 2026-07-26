@@ -166,9 +166,6 @@ if st.session_state.movimentacoes:
             st.session_state.movimentacoes = []
             st.rerun()
 
-from fpdf import FPDF
-import io
-
 def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo_final):
     pdf = FPDF()
     pdf.add_page()
