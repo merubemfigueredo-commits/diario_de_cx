@@ -166,6 +166,88 @@ if st.session_state.movimentacoes:
             st.session_state.movimentacoes = []
             st.rerun()
 
-# pip install streamlit pandas
-# streamlit run app_controle_diario.py
+from fpdf import FPDF
+import io
+
+def gerar_pdf(movs_do_dia, data_str, saldo_anterior, total_ent, total_sai, saldo_final):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Título
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Controle Diario de Caixa", ln=True, align="C")
+    
+    # Data
+    data_fmt = datetime.fromisoformat(data_str).strftime("%d/%m/%Y")
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 8, f"Data: {data_fmt}", ln=True, align="C")
+    pdf.ln(5)
+    
+    # KPIs
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(95, 8, f"Saldo Anterior: {fmt(saldo_anterior)}", border=0)
+    pdf.cell(95, 8, f"Saldo Final: {fmt(saldo_final)}", border=0, ln=True)
+    pdf.cell(95, 8, f"Total Entradas: {fmt(total_ent)}", border=0)
+    pdf.cell(95, 8, f"Total Saidas: {fmt(total_sai)}", border=0, ln=True)
+    pdf.ln(5)
+    
+    # Cabeçalho da tabela
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(70, 8, "Descricao", 1)
+    pdf.cell(50, 8, "Categoria", 1)
+    pdf.cell(30, 8, "Entrada", 1, align="R")
+    pdf.cell(30, 8, "Saida", 1, align="R")
+    pdf.cell(30, 8, "Saldo", 1, align="R", ln=True)
+    
+    # Linhas da tabela
+    pdf.set_font("Arial", "", 9)
+    saldo = saldo_anterior
+    if not movs_do_dia:
+        pdf.cell(0, 8, "Nenhuma movimentacao nesta data.", 1, ln=True, align="C")
+    else:
+        for m in movs_do_dia:
+            saldo += m["valor"]
+            entrada = fmt(m["valor"]) if m["valor"] >= 0 else "---"
+            saida = fmt(-m["valor"]) if m["valor"] < 0 else "---"
+            
+            # Quebra de linha se descrição for grande
+            pdf.cell(70, 8, m["descricao"][:25], 1)
+            pdf.cell(50, 8, m["categoria"][:20], 1)
+            pdf.cell(30, 8, entrada, 1, align="R")
+            pdf.cell(30, 8, saida, 1, align="R")
+            pdf.cell(30, 8, fmt(saldo), 1, align="R", ln=True)
+    
+    # Linha de total
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(120, 8, "TOTAL", 1)
+    pdf.cell(30, 8, fmt(total_ent), 1, align="R")
+    pdf.cell(30, 8, fmt(total_sai), 1, align="R")
+    pdf.cell(30, 8, fmt(saldo_final), 1, align="R", ln=True)
+    
+    # Rodapé
+    pdf.ln(10)
+    pdf.set_font("Arial", "I", 8)
+    pdf.cell(0, 5, f"Relatorio gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}", align="C")
+    
+    return pdf.output(dest="S").encode("utf-8")
+
+# ── Botão de Download do PDF ───────────────────────────────────────────────────
+st.divider()
+col1, col2 = st.columns([3,1])
+with col2:
+    if st.button("📄 Gerar PDF do Dia", use_container_width=True):
+        if not movs_do_dia:
+            st.warning("Não há movimentações nesta data para gerar PDF.")
+        else:
+            pdf_bytes = gerar_pdf(movs_do_dia, data_filtro_str, saldo_anterior, total_ent, total_sai, saldo_final)
+            nome_arquivo = f"caixa_{data_filtro_str}.pdf"
+            
+            st.download_button(
+                label="⬇️ Baixar PDF",
+                data=pdf_bytes,
+                file_name=nome_arquivo,
+                mime="application/pdf",
+                use_container_width=True
+            )
 
